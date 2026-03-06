@@ -62,7 +62,7 @@ Driver는 DAG 생성, 태스크 스케줄링, 결과 수집을 담당한다. 현
 |`driver-memory`|1g ~ 2g|Spark 공식 문서 기본값 1g. Iceberg 메타데이터 처리를 감안하여 2g 권장|
 
 
-> **참고:** executor 수가 500개를 초과하는 대규모 잡이 아닌 이상 driver-cores를 늘릴 필요는 없다.
+> ℹ️ **참고:** executor 수가 500개를 초과하는 대규모 잡이 아닌 이상 driver-cores를 늘릴 필요는 없다.
 
 ### 2.3 Executor 설정
 
@@ -71,6 +71,10 @@ Driver는 DAG 생성, 태스크 스케줄링, 결과 수집을 담당한다. 현
 |설정              |권장 값 |근거                                                                                                     |
 |----------------|-----|-------------------------------------------------------------------------------------------------------|
 |`executor-cores`|2 ~ 5|Spark 공식 튜닝 가이드에서 권장하는 범위. S3(MinIO) I/O throughput 관점에서 executor당 5개 이하 코어가 최적의 처리량을 보인다는 것이 일반적 가이드라인|
+
+**executor-cores가 하는 일:**
+
+executor-cores는 하나의 executor(= 하나의 JVM 프로세스)가 **동시에 실행할 수 있는 태스크 수**를 결정한다. 예를 들어 `executor-cores=2`이면 하나의 executor가 동시에 2개의 태스크를 병렬로 처리한다.
 
 **상세 근거:**
 
@@ -96,9 +100,13 @@ Total Executor Memory = executor-memory + spark.executor.memoryOverhead
 - K8S 환경에서는 Pod 리소스 request에 이 합산 값이 반영됨
 - 예: `executor-memory=2g` → 실제 Pod 메모리 요청 ≈ 2g + 384MB ≈ 2.4g
 
-> **주의:** memoryOverhead가 부족하면 K8S에서 OOMKilled가 발생할 수 있다. avro 파일 하나의 크기가 비정상적으로 큰 경우를 대비하여 여유를 두는 것이 좋다.
+> ⚠️ **주의:** memoryOverhead가 부족하면 K8S에서 OOMKilled가 발생할 수 있다. avro 파일 하나의 크기가 비정상적으로 큰 경우를 대비하여 여유를 두는 것이 좋다.
 
-#### 2.3.3 num-executors (현재 방식)
+-----
+
+### 2.4 num-executors 산정 기준
+
+#### 2.4.1 현재 방식
 
 **현재 산정 공식:**
 
@@ -111,38 +119,105 @@ num-executors = (avro 파일들의 총 크기 합 / 70MB) + 1
 - 70MB 기준은 경험적 테스트를 통해 적절한 성능이 나오는 것으로 확인되어 결정된 값
 - 명확한 이론적 근거가 있는 것은 아니며, 좀 더 체계적인 기준 수립이 필요함
 
-**70MB 기준에 대한 분석:**
+#### 2.4.2 개선 제안: 파티션 수 기반 산정
 
-- Spark에서 하나의 태스크가 처리하는 데이터 단위는 파티션이며, 파일 기반 소스의 경우 일반적으로 파일 크기 혹은 split size가 파티션 크기를 결정한다.
-- Spark의 기본 maxPartitionBytes(`spark.sql.files.maxPartitionBytes`)는 128MB이다.
-- 70MB는 128MB보다 작아서 executor당 하나의 파티션을 처리하더라도 메모리 여유가 확보되는 수준이다.
-- avro 파일은 read 시 메모리에서 row 형태로 디시리얼라이즈되므로 실제 메모리 사용량은 디스크 크기보다 클 수 있다.
+현재 70MB 기준에 이론적 근거를 부여하기 위해, Spark 내부에서 실제로 일어나는 일을 기준으로 executor 수를 산정하는 방식을 제안한다.
 
-**개선 제안 (근거 기반 산정 방향):**
+-----
 
-|접근 방식                   |설명                                      |산정 공식                                                    |
-|------------------------|----------------------------------------|---------------------------------------------------------|
-|방법 1: 파티션 수 기반          |Spark이 생성하는 실제 파티션 수를 기준으로 executor 수 결정|`num-executors = ceil(total_partitions / executor-cores)`|
-|방법 2: 목표 태스크 시간 기반      |태스크당 처리 시간을 측정하여 총 처리 시간 목표에 맞게 조정      |벤치마크 필요                                                  |
-|방법 3: Dynamic Allocation|Spark이 런타임에 자동으로 executor 수를 조정         |아래 섹션 참고                                                 |
+**핵심 개념: 파티션(Partition)이란?**
 
-**방법 1 상세 (권장):**
+Spark은 데이터를 한꺼번에 처리하지 않는다. 입력 데이터를 여러 개의 조각으로 나누고, 각 조각을 하나의 **태스크(Task)**가 독립적으로 처리한다. 이 조각 하나하나를 **파티션(Partition)**이라고 한다.
 
 ```
-1) total_input_size = avro 파일 총 크기
-2) num_partitions = ceil(total_input_size / spark.sql.files.maxPartitionBytes)
-   - maxPartitionBytes 기본값: 128MB
-3) num_executors = ceil(num_partitions / executor-cores)
-   - executor-cores = 2 기준 예시
-4) 최소 1, 최대는 K8S 클러스터 가용 리소스 내에서 결정
+[avro 파일 500MB] → Spark이 내부적으로 분할 → [파티션1: 128MB] [파티션2: 128MB] [파티션3: 128MB] [파티션4: 116MB]
+                                                   ↓               ↓               ↓               ↓
+                                                 태스크1          태스크2          태스크3          태스크4
 ```
 
-예시: avro 파일 총 크기가 1GB인 경우
+파티션이 몇 개 만들어지는지는 `spark.sql.files.maxPartitionBytes` 설정이 결정한다. 기본값은 **128MB**이다. 즉, Spark은 입력 파일들을 최대 128MB 단위로 잘라서 파티션을 만든다.
 
-- `num_partitions = ceil(1024MB / 128MB) = 8`
-- `executor-cores = 2`인 경우: `num_executors = ceil(8 / 2) = 4`
+**파티션 수 계산:**
 
-> **TODO:** 위 공식으로 계산한 executor 수와 현재 70MB 기준 방식의 결과를 비교 테스트하여 최적 기준을 확정할 필요가 있다.
+```
+파티션 수 = ceil(입력 데이터 총 크기 / maxPartitionBytes)
+         = ceil(입력 데이터 총 크기 / 128MB)
+```
+
+예시:
+
+|입력 데이터 총 크기 |파티션 수 계산        |결과 |
+|------------|----------------|---|
+|100MB       |ceil(100 / 128) |1개 |
+|300MB       |ceil(300 / 128) |3개 |
+|1GB (1024MB)|ceil(1024 / 128)|8개 |
+|5GB (5120MB)|ceil(5120 / 128)|40개|
+
+
+> ℹ️ **참고:** 실제로는 avro 파일의 개수와 각 파일 크기에 따라 Spark의 파티셔닝 결과가 달라질 수 있다. 예를 들어 10MB짜리 avro 파일이 50개이면, Spark은 여러 파일을 합쳐서 하나의 파티션으로 묶거나 파일 단위로 파티션을 만들 수 있다. 위 공식은 대략적인 추정치로, 정확한 파티션 수는 Spark UI의 Stages 탭에서 확인해야 한다.
+
+-----
+
+**파티션 수로부터 executor 수를 산정하는 이유:**
+
+파티션 수 = 태스크 수이다. 태스크는 executor 안의 코어에서 실행된다. 따라서 **모든 태스크를 동시에 처리하려면 태스크 수만큼의 코어가 필요**하고, executor 수는 다음과 같이 결정된다:
+
+```
+필요한 총 코어 수 = 파티션 수 (= 태스크 수)
+num-executors = ceil(필요한 총 코어 수 / executor-cores)
+```
+
+executor-cores로 나누는 이유는, **하나의 executor가 여러 코어를 가지고 있어서 동시에 여러 태스크를 처리할 수 있기 때문**이다.
+
+그림으로 보면:
+
+```
+executor-cores = 1 인 경우:
+  executor 1개 = 코어 1개 = 동시에 태스크 1개 처리
+  → 태스크 8개를 동시에 처리하려면 executor 8개 필요
+
+executor-cores = 2 인 경우:
+  executor 1개 = 코어 2개 = 동시에 태스크 2개 처리
+  → 태스크 8개를 동시에 처리하려면 executor 4개 필요
+
+executor-cores = 4 인 경우:
+  executor 1개 = 코어 4개 = 동시에 태스크 4개 처리
+  → 태스크 8개를 동시에 처리하려면 executor 2개 필요
+```
+
+**전체 계산 예시:**
+
+입력 데이터 총 크기가 1GB(1024MB)이고, `executor-cores=2`인 경우:
+
+```
+Step 1) 파티션 수 계산
+        파티션 수 = ceil(1024MB / 128MB) = 8개
+        → 즉, Spark은 이 데이터를 8개의 태스크로 나눠서 처리한다
+
+Step 2) executor 수 계산
+        num-executors = ceil(8 / 2) = 4개
+        → executor 1개가 코어 2개를 가지고 있으므로, 
+          executor 4개 × 코어 2개 = 총 8코어 → 8개 태스크를 동시에 처리 가능
+```
+
+> ⚠️ **주의:** 위 공식은 “모든 태스크를 한 번에 동시 처리” 기준이다. 반드시 모든 태스크를 동시에 처리할 필요는 없다. executor 수를 줄이면 태스크가 순차적으로 여러 라운드에 걸쳐 처리되며, 처리 시간은 늘어나지만 리소스 사용은 줄어든다. 반대로 executor 수를 늘리면 처리 시간은 줄지만 K8S 클러스터에 더 많은 리소스를 요청하게 된다. 적절한 균형점은 벤치마크를 통해 찾아야 한다.
+
+-----
+
+**현재 70MB 방식과 파티션 기반 방식의 비교:**
+
+|입력 크기|현재 방식 (/ 70MB + 1)  |파티션 기반 (cores=2)           |파티션 기반 (cores=4)           |
+|-----|--------------------|---------------------------|---------------------------|
+|300MB|ceil(300/70)+1 = 6  |ceil(ceil(300/128)/2) = 2  |ceil(ceil(300/128)/4) = 1  |
+|1GB  |ceil(1024/70)+1 = 16|ceil(ceil(1024/128)/2) = 4 |ceil(ceil(1024/128)/4) = 2 |
+|3GB  |ceil(3072/70)+1 = 45|ceil(ceil(3072/128)/2) = 12|ceil(ceil(3072/128)/4) = 6 |
+|5GB  |ceil(5120/70)+1 = 75|ceil(ceil(5120/128)/2) = 20|ceil(ceil(5120/128)/4) = 10|
+
+현재 70MB 방식은 파티션 기반 대비 executor를 **상당히 많이** 할당하는 것을 알 수 있다. 이는 executor당 코어가 1개인 것을 전제한 것과 비슷한 결과이며, maxPartitionBytes(128MB)보다 작은 70MB로 나누기 때문에 파티션 수보다도 더 많은 executor를 만들게 된다.
+
+이것이 반드시 나쁜 것은 아니다. executor가 많으면 태스크당 사용 가능한 메모리가 넉넉해지고, 태스크가 여러 라운드를 돌지 않아서 빠를 수 있다. 다만 K8S 리소스를 많이 점유하므로 클러스터 여유가 충분한지 확인이 필요하다.
+
+> ⚠️ **TODO:** 현재 70MB 기준과 파티션 기반 방식(128MB + executor-cores 반영)의 처리 시간 및 리소스 사용량을 비교 벤치마크하여 최적 기준을 확정할 필요가 있다.
 
 -----
 
@@ -183,7 +258,7 @@ Spark 4.x에서 AQE는 기본 활성화 상태이다. AQE는 런타임 통계를
 |5GB 이상     |200 이상               |AQE `initialPartitionNum` 활용|
 
 
-> **핵심:** AQE가 활성화되어 있으므로 `spark.sql.shuffle.partitions`를 넉넉하게 설정(예: 200)해도 AQE가 런타임에 불필요한 빈 파티션을 병합해준다. 너무 적게 잡는 것보다 넉넉하게 잡는 편이 안전하다.
+> ℹ️ **핵심:** AQE가 활성화되어 있으므로 `spark.sql.shuffle.partitions`를 넉넉하게 설정(예: 200)해도 AQE가 런타임에 불필요한 빈 파티션을 병합해준다. 너무 적게 잡는 것보다 넉넉하게 잡는 편이 안전하다.
 
 ### 3.3 Iceberg Write 관련 설정
 
@@ -262,13 +337,13 @@ spark.dynamicAllocation.executorIdleTimeout=60s
 spark.dynamicAllocation.shuffleTracking.timeout=600s
 ```
 
-> **주의 (Spark on K8S 공식 문서):** K8S에서 Dynamic Allocation 사용 시 External Shuffle Service가 지원되지 않으므로 `spark.dynamicAllocation.shuffleTracking.enabled=true`가 필수이다. 셔플 데이터가 있는 executor는 셔플 트래킹 타임아웃이 만료될 때까지 제거되지 않으므로, 최악의 경우 이전 스테이지의 executor가 계속 유지되어 클러스터 리소스를 더 많이 점유할 수 있다.
+> ⚠️ **주의 (Spark on K8S 공식 문서):** K8S에서 Dynamic Allocation 사용 시 External Shuffle Service가 지원되지 않으므로 `spark.dynamicAllocation.shuffleTracking.enabled=true`가 필수이다. 셔플 데이터가 있는 executor는 셔플 트래킹 타임아웃이 만료될 때까지 제거되지 않으므로, 최악의 경우 이전 스테이지의 executor가 계속 유지되어 클러스터 리소스를 더 많이 점유할 수 있다.
 
 ### 4.4 권장 사항
 
-**현재 상황에서는 고정 Executor 방식을 유지하되, 산정 기준을 개선하는 것을 권장한다.**
+> ℹ️ **현재 상황에서는 고정 Executor 방식을 유지하되, 산정 기준을 개선하는 것을 권장한다.**
 
-이유:
+**이유:**
 
 1. 현재 워크플로우가 단순 read → append로, 스테이지별 리소스 요구량 차이가 크지 않아 Dynamic Allocation의 이점이 제한적이다.
 1. K8S 환경에서 Dynamic Allocation은 셔플 트래킹에 의존하는데, executor가 반환된 후 셔플 데이터를 재계산해야 하는 상황이 발생할 수 있다.
@@ -327,9 +402,9 @@ spark.dynamicAllocation.shuffleTracking.timeout=600s
 
 각 설정 변경 시 아래 항목을 기록하여 비교한다:
 
-```
-| 테스트 ID | 날짜 | 데이터 크기 | num-executors | executor-cores | executor-memory | 처리 시간 | 비고 |
-```
+|테스트 ID|날짜|데이터 크기|num-executors|executor-cores|executor-memory|처리 시간|비고|
+|------|--|------|-------------|--------------|---------------|-----|--|
+|      |  |      |             |              |               |     |  |
 
 -----
 
@@ -378,14 +453,14 @@ spark.sql.sources.parallelPartitionDiscovery.parallelism=20
 
 ## 7. TODO / 개선 과제
 
-|과제                         |우선순위|설명                                                |
-|---------------------------|----|--------------------------------------------------|
-|num-executors 산정 기준 검증     |높음  |70MB 기준을 `maxPartitionBytes(128MB)` 기반 공식과 비교 벤치마크|
-|executor-memory 최적값 측정     |높음  |Spark UI에서 peak memory를 확인하여 현재 메모리 대비 실제 사용량 분석  |
-|shuffle.partitions 검증      |중간  |AQE 활성화 상태에서 70 vs 200 비교                         |
-|write.distribution-mode 테스트|중간  |none vs hash 모드의 쓰기 성능, 파일 수, 후속 읽기 성능 비교         |
-|Dynamic Allocation 파일럿     |낮음  |클러스터 공유 이슈 발생 시 검토                                |
-|모니터링 대시보드 구축               |중간  |잡별 실행 시간, 리소스 사용량 추적                              |
+|과제                         |우선순위|설명                                              |
+|---------------------------|----|------------------------------------------------|
+|num-executors 산정 기준 검증     |🔴 높음|70MB 기준을 maxPartitionBytes(128MB) 기반 공식과 비교 벤치마크|
+|executor-memory 최적값 측정     |🔴 높음|Spark UI에서 peak memory를 확인하여 현재 메모리 대비 실제 사용량 분석|
+|shuffle.partitions 검증      |🟡 중간|AQE 활성화 상태에서 70 vs 200 비교                       |
+|write.distribution-mode 테스트|🟡 중간|none vs hash 모드의 쓰기 성능, 파일 수, 후속 읽기 성능 비교       |
+|Dynamic Allocation 파일럿     |🟢 낮음|클러스터 공유 이슈 발생 시 검토                              |
+|모니터링 대시보드 구축               |🟡 중간|잡별 실행 시간, 리소스 사용량 추적                            |
 
 -----
 
