@@ -4,45 +4,14 @@
 <head>
 <meta charset="UTF-8">
 <title>Spark Job 설정 튜닝 가이드</title>
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    color: #172B4D;
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 24px;
-  }
-  h1 { font-size: 24px; font-weight: 600; margin: 32px 0 16px; border-bottom: 2px solid #0052CC; padding-bottom: 8px; }
-  h2 { font-size: 20px; font-weight: 600; margin: 28px 0 12px; color: #0052CC; }
-  h3 { font-size: 16px; font-weight: 600; margin: 20px 0 8px; }
-  h4 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
-  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
-  th, td { border: 1px solid #DFE1E6; padding: 8px 12px; text-align: left; vertical-align: top; }
-  th { background-color: #F4F5F7; font-weight: 600; }
-  code { background-color: #F4F5F7; padding: 2px 6px; border-radius: 3px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 13px; }
-  pre { background-color: #F4F5F7; padding: 12px 16px; border-radius: 3px; overflow-x: auto; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 13px; line-height: 1.5; }
-  pre code { background: none; padding: 0; }
-  blockquote { border-left: 3px solid #0052CC; margin: 12px 0; padding: 8px 16px; background: #F4F5F7; }
-  blockquote p { margin: 0; }
-  ul, ol { margin: 8px 0; padding-left: 24px; }
-  li { margin: 4px 0; }
-  hr { border: none; border-top: 1px solid #DFE1E6; margin: 24px 0; }
-  .info-panel { background: #DEEBFF; border-radius: 3px; padding: 12px 16px; margin: 12px 0; }
-  .warning-panel { background: #FFFAE6; border-radius: 3px; padding: 12px 16px; margin: 12px 0; }
-  .status-high { background: #FF5630; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; }
-  .status-mid { background: #FF991F; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; }
-  .status-low { background: #36B37E; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; }
-</style>
 </head>
-<body>
+<body style="font-family:sans-serif; font-size:14px; line-height:1.6; color:#172B4D; max-width:960px; margin:0 auto; padding:24px;">
 
 <h1>Spark Job 설정 튜닝 가이드</h1>
 
 <h2>문서 정보</h2>
-<table>
-  <tr><th>항목</th><th>내용</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr><th style="background-color:#f4f5f7; text-align:left;">항목</th><th style="background-color:#f4f5f7; text-align:left;">내용</th></tr>
   <tr><td>작성일</td><td>2026-03-06</td></tr>
   <tr><td>환경</td><td>Kubernetes 클러스터</td></tr>
   <tr><td>스토리지</td><td>S3 (MinIO)</td></tr>
@@ -51,12 +20,12 @@
   <tr><td>Airflow</td><td>3.1.7</td></tr>
 </table>
 
-<hr>
+<br>
 
 <h2>1. 워크플로우 개요</h2>
 
 <h3>1.1 전체 흐름</h3>
-<pre><code>[Oracle DB] → [Airflow DAG] → [S3 텍스트 파일 생성] → [Spark Job 실행 (K8S)] → [Iceberg 테이블 적재] → [Oracle DB 완료 처리]</code></pre>
+<pre>[Oracle DB] → [Airflow DAG] → [S3 텍스트 파일 생성] → [Spark Job 실행 (K8S)] → [Iceberg 테이블 적재] → [Oracle DB 완료 처리]</pre>
 
 <h3>1.2 Spark Job 처리 단계</h3>
 <ol>
@@ -73,13 +42,18 @@
   <li>처리 완료 후 Oracle DB 테이블에 해당 row 완료 처리</li>
 </ol>
 
-<hr>
+<br>
 
 <h2>2. Spark 리소스 설정 가이드</h2>
 
 <h3>2.1 설정 항목 요약</h3>
-<table>
-  <tr><th>설정</th><th>현재 값</th><th>산정 기준</th><th>근거 수준</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">설정</th>
+    <th style="background-color:#f4f5f7; text-align:left;">현재 값</th>
+    <th style="background-color:#f4f5f7; text-align:left;">산정 기준</th>
+    <th style="background-color:#f4f5f7; text-align:left;">근거 수준</th>
+  </tr>
   <tr><td><code>driver-cores</code></td><td>(설정 필요)</td><td>아래 가이드 참고</td><td>명확한 기준 필요</td></tr>
   <tr><td><code>driver-memory</code></td><td>(설정 필요)</td><td>아래 가이드 참고</td><td>명확한 기준 필요</td></tr>
   <tr><td><code>executor-cores</code></td><td>(설정 필요)</td><td>아래 가이드 참고</td><td>명확한 기준 필요</td></tr>
@@ -92,41 +66,53 @@
 <h3>2.2 Driver 설정</h3>
 <p>Driver는 DAG 생성, 태스크 스케줄링, 결과 수집을 담당한다. 현재 워크플로우(avro read → Iceberg append)는 Driver에 대량 데이터를 collect하지 않으므로 상대적으로 작은 리소스로도 충분하다.</p>
 
-<p><strong>권장 설정:</strong></p>
-<table>
-  <tr><th>설정</th><th>권장 값</th><th>근거</th></tr>
+<p><b>권장 설정:</b></p>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">설정</th>
+    <th style="background-color:#f4f5f7; text-align:left;">권장 값</th>
+    <th style="background-color:#f4f5f7; text-align:left;">근거</th>
+  </tr>
   <tr><td><code>driver-cores</code></td><td>1</td><td>단순 스케줄링 작업. collect() 미사용 시 1 core로 충분</td></tr>
   <tr><td><code>driver-memory</code></td><td>1g ~ 2g</td><td>Spark 공식 문서 기본값 1g. Iceberg 메타데이터 처리를 감안하여 2g 권장</td></tr>
 </table>
 
-<div class="info-panel">
-  <strong>참고:</strong> executor 수가 500개를 초과하는 대규모 잡이 아닌 이상 driver-cores를 늘릴 필요는 없다.
-</div>
+<table border="0" cellpadding="10" cellspacing="0" style="width:100%; margin:12px 0;">
+  <tr><td style="background-color:#deebff; border-radius:3px;">ℹ️ <b>참고:</b> executor 수가 500개를 초과하는 대규모 잡이 아닌 이상 driver-cores를 늘릴 필요는 없다.</td></tr>
+</table>
 
 <h3>2.3 Executor 설정</h3>
 
 <h4>2.3.1 executor-cores</h4>
-<table>
-  <tr><th>설정</th><th>권장 값</th><th>근거</th></tr>
-  <tr><td><code>executor-cores</code></td><td>2 ~ 5</td><td>Spark 공식 튜닝 가이드에서 권장하는 범위. S3(MinIO) I/O throughput 관점에서 executor당 5개 이하 코어가 최적의 처리량을 보인다는 것이 일반적 가이드라인</td></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">설정</th>
+    <th style="background-color:#f4f5f7; text-align:left;">권장 값</th>
+    <th style="background-color:#f4f5f7; text-align:left;">근거</th>
+  </tr>
+  <tr><td><code>executor-cores</code></td><td>2 ~ 5</td><td>Spark 공식 튜닝 가이드 권장 범위. S3(MinIO) I/O throughput 관점에서 executor당 5개 이하 코어가 최적</td></tr>
 </table>
 
-<p><strong>상세 근거:</strong></p>
+<p><b>상세 근거:</b></p>
 <ul>
   <li>executor당 코어가 1개(Tiny 방식)이면 JVM 내 멀티태스크 실행의 이점을 살릴 수 없고, broadcast 변수 등이 executor마다 복제되어 메모리 낭비가 발생한다.</li>
   <li>executor당 코어가 너무 많으면(Fat 방식) GC 부담이 증가하고, S3/HDFS 동시 write throughput이 오히려 저하된다.</li>
-  <li><strong>실무적 권장: 2 ~ 4 cores</strong> (현재 워크플로우가 단순 read → append이므로 코어 수를 높게 잡을 필요 없음)</li>
+  <li><b>실무적 권장: 2 ~ 4 cores</b> (현재 워크플로우가 단순 read → append이므로 코어 수를 높게 잡을 필요 없음)</li>
 </ul>
 
 <h4>2.3.2 executor-memory</h4>
-<table>
-  <tr><th>설정</th><th>권장 값</th><th>근거</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">설정</th>
+    <th style="background-color:#f4f5f7; text-align:left;">권장 값</th>
+    <th style="background-color:#f4f5f7; text-align:left;">근거</th>
+  </tr>
   <tr><td><code>executor-memory</code></td><td>2g ~ 4g</td><td>avro read → Iceberg append의 단순 파이프라인. 복잡한 셔플이나 조인이 없으므로 큰 메모리 불필요</td></tr>
 </table>
 
-<p><strong>메모리 구성 참고 (Spark 4.x 기준):</strong></p>
-<pre><code>Total Executor Memory = executor-memory + spark.executor.memoryOverhead
-                      = executor-memory + max(384MB, executor-memory * 0.1)</code></pre>
+<p><b>메모리 구성 참고 (Spark 4.x 기준):</b></p>
+<pre>Total Executor Memory = executor-memory + spark.executor.memoryOverhead
+                      = executor-memory + max(384MB, executor-memory * 0.1)</pre>
 
 <ul>
   <li><code>executor-memory</code>로 설정한 값은 JVM Heap 영역</li>
@@ -135,22 +121,22 @@
   <li>예: <code>executor-memory=2g</code> → 실제 Pod 메모리 요청 ≈ 2g + 384MB ≈ 2.4g</li>
 </ul>
 
-<div class="warning-panel">
-  <strong>주의:</strong> memoryOverhead가 부족하면 K8S에서 OOMKilled가 발생할 수 있다. avro 파일 하나의 크기가 비정상적으로 큰 경우를 대비하여 여유를 두는 것이 좋다.
-</div>
+<table border="0" cellpadding="10" cellspacing="0" style="width:100%; margin:12px 0;">
+  <tr><td style="background-color:#fffae6; border-radius:3px;">⚠️ <b>주의:</b> memoryOverhead가 부족하면 K8S에서 OOMKilled가 발생할 수 있다. avro 파일 하나의 크기가 비정상적으로 큰 경우를 대비하여 여유를 두는 것이 좋다.</td></tr>
+</table>
 
 <h4>2.3.3 num-executors (현재 방식)</h4>
 
-<p><strong>현재 산정 공식:</strong></p>
-<pre><code>num-executors = (avro 파일들의 총 크기 합 / 70MB) + 1</code></pre>
+<p><b>현재 산정 공식:</b></p>
+<pre>num-executors = (avro 파일들의 총 크기 합 / 70MB) + 1</pre>
 
-<p><strong>현재 방식의 배경:</strong></p>
+<p><b>현재 방식의 배경:</b></p>
 <ul>
   <li>70MB 기준은 경험적 테스트를 통해 적절한 성능이 나오는 것으로 확인되어 결정된 값</li>
   <li>명확한 이론적 근거가 있는 것은 아니며, 좀 더 체계적인 기준 수립이 필요함</li>
 </ul>
 
-<p><strong>70MB 기준에 대한 분석:</strong></p>
+<p><b>70MB 기준에 대한 분석:</b></p>
 <ul>
   <li>Spark에서 하나의 태스크가 처리하는 데이터 단위는 파티션이며, 파일 기반 소스의 경우 일반적으로 파일 크기 혹은 split size가 파티션 크기를 결정한다.</li>
   <li>Spark의 기본 maxPartitionBytes(<code>spark.sql.files.maxPartitionBytes</code>)는 128MB이다.</li>
@@ -158,41 +144,50 @@
   <li>avro 파일은 read 시 메모리에서 row 형태로 디시리얼라이즈되므로 실제 메모리 사용량은 디스크 크기보다 클 수 있다.</li>
 </ul>
 
-<p><strong>개선 제안 (근거 기반 산정 방향):</strong></p>
-<table>
-  <tr><th>접근 방식</th><th>설명</th><th>산정 공식</th></tr>
+<p><b>개선 제안 (근거 기반 산정 방향):</b></p>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">접근 방식</th>
+    <th style="background-color:#f4f5f7; text-align:left;">설명</th>
+    <th style="background-color:#f4f5f7; text-align:left;">산정 공식</th>
+  </tr>
   <tr><td>방법 1: 파티션 수 기반</td><td>Spark이 생성하는 실제 파티션 수를 기준으로 executor 수 결정</td><td><code>num-executors = ceil(total_partitions / executor-cores)</code></td></tr>
   <tr><td>방법 2: 목표 태스크 시간 기반</td><td>태스크당 처리 시간을 측정하여 총 처리 시간 목표에 맞게 조정</td><td>벤치마크 필요</td></tr>
   <tr><td>방법 3: Dynamic Allocation</td><td>Spark이 런타임에 자동으로 executor 수를 조정</td><td>아래 섹션 참고</td></tr>
 </table>
 
-<p><strong>방법 1 상세 (권장):</strong></p>
-<pre><code>1) total_input_size = avro 파일 총 크기
+<p><b>방법 1 상세 (권장):</b></p>
+<pre>1) total_input_size = avro 파일 총 크기
 2) num_partitions = ceil(total_input_size / spark.sql.files.maxPartitionBytes)
    - maxPartitionBytes 기본값: 128MB
 3) num_executors = ceil(num_partitions / executor-cores)
    - executor-cores = 2 기준 예시
-4) 최소 1, 최대는 K8S 클러스터 가용 리소스 내에서 결정</code></pre>
+4) 최소 1, 최대는 K8S 클러스터 가용 리소스 내에서 결정</pre>
 
-<p><strong>예시:</strong> avro 파일 총 크기가 1GB인 경우</p>
+<p><b>예시:</b> avro 파일 총 크기가 1GB인 경우</p>
 <ul>
   <li><code>num_partitions = ceil(1024MB / 128MB) = 8</code></li>
   <li><code>executor-cores = 2</code>인 경우: <code>num_executors = ceil(8 / 2) = 4</code></li>
 </ul>
 
-<div class="warning-panel">
-  <strong>TODO:</strong> 위 공식으로 계산한 executor 수와 현재 70MB 기준 방식의 결과를 비교 테스트하여 최적 기준을 확정할 필요가 있다.
-</div>
+<table border="0" cellpadding="10" cellspacing="0" style="width:100%; margin:12px 0;">
+  <tr><td style="background-color:#fffae6; border-radius:3px;">⚠️ <b>TODO:</b> 위 공식으로 계산한 executor 수와 현재 70MB 기준 방식의 결과를 비교 테스트하여 최적 기준을 확정할 필요가 있다.</td></tr>
+</table>
 
-<hr>
+<br>
 
 <h2>3. Spark SQL / AQE 설정</h2>
 
 <h3>3.1 Adaptive Query Execution (AQE)</h3>
 <p>Spark 4.x에서 AQE는 기본 활성화 상태이다. AQE는 런타임 통계를 사용하여 최적의 실행 계획을 선택한다.</p>
 
-<table>
-  <tr><th>설정</th><th>현재 값</th><th>기본값</th><th>설명</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">설정</th>
+    <th style="background-color:#f4f5f7; text-align:left;">현재 값</th>
+    <th style="background-color:#f4f5f7; text-align:left;">기본값</th>
+    <th style="background-color:#f4f5f7; text-align:left;">설명</th>
+  </tr>
   <tr><td><code>spark.sql.adaptive.enabled</code></td><td>(기본)</td><td>true</td><td>AQE 활성화 여부</td></tr>
   <tr><td><code>spark.sql.adaptive.coalescePartitions.enabled</code></td><td>(기본)</td><td>true</td><td>셔플 후 파티션 자동 병합</td></tr>
   <tr><td><code>spark.sql.adaptive.coalescePartitions.parallelismFirst</code></td><td>true</td><td>true</td><td>병합 시 병렬성 우선 여부</td></tr>
@@ -201,7 +196,7 @@
 
 <h3>3.2 spark.sql.shuffle.partitions 설정 분석</h3>
 
-<p><strong>현재 값: 70</strong></p>
+<p><b>현재 값: 70</b></p>
 
 <p>현재 워크플로우(avro read → Iceberg append)에서 셔플이 발생하는 경우:</p>
 <ul>
@@ -209,62 +204,74 @@
   <li><code>write.distribution-mode=none</code>이면 셔플이 발생하지 않음</li>
 </ul>
 
-<p><strong>분석:</strong></p>
+<p><b>분석:</b></p>
 <ul>
   <li>AQE가 활성화되어 있으면 <code>spark.sql.shuffle.partitions</code>는 초기 파티션 수로만 사용되고, 런타임에 AQE가 자동으로 최적 파티션 수로 병합(coalesce)한다.</li>
-  <li><code>parallelismFirst=true</code>는 AQE가 파티션을 병합할 때 목표 크기보다 병렬성을 우선시하도록 한다. 이 설정은 파티션당 데이터가 적더라도 더 많은 파티션을 유지하여 병렬 처리를 극대화한다.</li>
+  <li><code>parallelismFirst=true</code>는 AQE가 파티션을 병합할 때 목표 크기보다 병렬성을 우선시하도록 한다.</li>
   <li>70은 기본값(200)보다 낮은 수치인데, 데이터 규모가 작은 경우에는 합리적인 값이다. 다만, 데이터가 커지면 너무 적은 초기 파티션이 셔플 단계에서 병목이 될 수 있다.</li>
 </ul>
 
-<p><strong>개선 제안:</strong></p>
-<table>
-  <tr><th>데이터 규모</th><th>권장 shuffle.partitions</th><th>비고</th></tr>
+<p><b>개선 제안:</b></p>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">데이터 규모</th>
+    <th style="background-color:#f4f5f7; text-align:left;">권장 shuffle.partitions</th>
+    <th style="background-color:#f4f5f7; text-align:left;">비고</th>
+  </tr>
   <tr><td>~ 500MB</td><td>70 (현재)</td><td>현재 규모에 적합</td></tr>
   <tr><td>500MB ~ 5GB</td><td>200 (기본값)</td><td>AQE가 자동 조정</td></tr>
   <tr><td>5GB 이상</td><td>200 이상</td><td>AQE initialPartitionNum 활용</td></tr>
 </table>
 
-<div class="info-panel">
-  <strong>핵심:</strong> AQE가 활성화되어 있으므로 <code>spark.sql.shuffle.partitions</code>를 넉넉하게 설정(예: 200)해도 AQE가 런타임에 불필요한 빈 파티션을 병합해준다. 너무 적게 잡는 것보다 넉넉하게 잡는 편이 안전하다.
-</div>
+<table border="0" cellpadding="10" cellspacing="0" style="width:100%; margin:12px 0;">
+  <tr><td style="background-color:#deebff; border-radius:3px;">ℹ️ <b>핵심:</b> AQE가 활성화되어 있으므로 <code>spark.sql.shuffle.partitions</code>를 넉넉하게 설정(예: 200)해도 AQE가 런타임에 불필요한 빈 파티션을 병합해준다. 너무 적게 잡는 것보다 넉넉하게 잡는 편이 안전하다.</td></tr>
+</table>
 
 <h3>3.3 Iceberg Write 관련 설정</h3>
 <p>현재 워크플로우가 avro → Iceberg append이므로 아래 Iceberg 쪽 설정도 확인이 필요하다.</p>
 
-<table>
-  <tr><th>설정 (Iceberg 테이블 속성)</th><th>기본값</th><th>설명</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">설정 (Iceberg 테이블 속성)</th>
+    <th style="background-color:#f4f5f7; text-align:left;">기본값</th>
+    <th style="background-color:#f4f5f7; text-align:left;">설명</th>
+  </tr>
   <tr><td><code>write.distribution-mode</code></td><td>hash (파티션 테이블) / none (비파티션)</td><td>쓰기 시 데이터 분배 모드. hash는 셔플을 유발함</td></tr>
   <tr><td><code>write.target-file-size-bytes</code></td><td>512MB</td><td>Iceberg가 데이터 파일을 롤오버하는 목표 크기</td></tr>
   <tr><td><code>write.format.default</code></td><td>parquet</td><td>Iceberg 테이블의 기본 저장 포맷</td></tr>
 </table>
 
-<p><strong>고려사항:</strong></p>
+<p><b>고려사항:</b></p>
 <ul>
   <li><code>write.distribution-mode=none</code>으로 설정하면 셔플을 건너뛰어 쓰기 속도가 빨라지지만, 소규모 파일이 많이 생성될 수 있다. 이 경우 주기적 compaction이 필요하다.</li>
   <li><code>write.distribution-mode=hash</code>(기본)는 파티션별로 데이터를 모아 쓰므로 파일 수가 적고 읽기 성능에 유리하지만, 셔플 비용이 추가된다.</li>
   <li>Iceberg 공식 문서에 따르면, Spark 태스크 크기가 <code>write.target-file-size-bytes</code>보다 작으면 해당 크기의 파일이 생성되지 않는다. 디스크에 쓰여지는 파일은 컬럼 형식 + 압축으로 인해 Spark의 인메모리 크기보다 훨씬 작아진다.</li>
 </ul>
 
-<hr>
+<br>
 
 <h2>4. 고정 Executor 수 vs Dynamic Allocation 비교 분석</h2>
 
 <h3>4.1 비교표</h3>
-<table>
-  <tr><th>항목</th><th>고정 Executor (현재 방식)</th><th>Dynamic Allocation</th></tr>
-  <tr><td><strong>설정 복잡도</strong></td><td>낮음 (공식으로 단순 계산)</td><td>중간 (추가 설정 필요)</td></tr>
-  <tr><td><strong>리소스 효율</strong></td><td>전체 Job 동안 고정 점유</td><td>필요할 때만 할당/반환</td></tr>
-  <tr><td><strong>K8S 호환성</strong></td><td>완전 지원</td><td>지원됨 (셔플 트래킹 필요)</td></tr>
-  <tr><td><strong>예측 가능성</strong></td><td>높음 (항상 동일 리소스)</td><td>낮음 (런타임에 변동)</td></tr>
-  <tr><td><strong>스케일 업/다운</strong></td><td>수동 (공식 수정 필요)</td><td>자동</td></tr>
-  <tr><td><strong>클러스터 공유</strong></td><td>비효율 (미사용 리소스 점유)</td><td>효율적 (유휴 executor 반환)</td></tr>
-  <tr><td><strong>셔플 데이터 안정성</strong></td><td>안정적 (executor 유지)</td><td>주의 필요 (executor 반환 시 셔플 데이터 유실 가능)</td></tr>
-  <tr><td><strong>Pod 기동 오버헤드</strong></td><td>1회 (시작 시)</td><td>N회 (동적 추가 시마다)</td></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">항목</th>
+    <th style="background-color:#f4f5f7; text-align:left;">고정 Executor (현재 방식)</th>
+    <th style="background-color:#f4f5f7; text-align:left;">Dynamic Allocation</th>
+  </tr>
+  <tr><td><b>설정 복잡도</b></td><td>낮음 (공식으로 단순 계산)</td><td>중간 (추가 설정 필요)</td></tr>
+  <tr><td><b>리소스 효율</b></td><td>전체 Job 동안 고정 점유</td><td>필요할 때만 할당/반환</td></tr>
+  <tr><td><b>K8S 호환성</b></td><td>완전 지원</td><td>지원됨 (셔플 트래킹 필요)</td></tr>
+  <tr><td><b>예측 가능성</b></td><td>높음 (항상 동일 리소스)</td><td>낮음 (런타임에 변동)</td></tr>
+  <tr><td><b>스케일 업/다운</b></td><td>수동 (공식 수정 필요)</td><td>자동</td></tr>
+  <tr><td><b>클러스터 공유</b></td><td>비효율 (미사용 리소스 점유)</td><td>효율적 (유휴 executor 반환)</td></tr>
+  <tr><td><b>셔플 데이터 안정성</b></td><td>안정적 (executor 유지)</td><td>주의 필요 (executor 반환 시 셔플 데이터 유실 가능)</td></tr>
+  <tr><td><b>Pod 기동 오버헤드</b></td><td>1회 (시작 시)</td><td>N회 (동적 추가 시마다)</td></tr>
 </table>
 
 <h3>4.2 현재 워크플로우에 대한 분석</h3>
 
-<p><strong>현재 워크플로우 특성:</strong></p>
+<p><b>현재 워크플로우 특성:</b></p>
 <ul>
   <li>단방향 파이프라인: avro read → Iceberg append</li>
   <li>배치 단위로 처리 (Airflow에서 트리거)</li>
@@ -272,7 +279,7 @@
   <li>Iceberg write 시 hash 분배 모드 사용 시 셔플 발생</li>
 </ul>
 
-<p><strong>고정 Executor 방식이 적합한 경우:</strong></p>
+<p><b>고정 Executor 방식이 적합한 경우:</b></p>
 <ul>
   <li>배치별 데이터 크기가 비교적 일정한 경우</li>
   <li>K8S 클러스터를 이 잡 전용으로 사용하는 경우</li>
@@ -280,7 +287,7 @@
   <li>셔플 데이터의 안정성이 중요한 경우</li>
 </ul>
 
-<p><strong>Dynamic Allocation이 적합한 경우:</strong></p>
+<p><b>Dynamic Allocation이 적합한 경우:</b></p>
 <ul>
   <li>배치별 데이터 크기 편차가 큰 경우</li>
   <li>K8S 클러스터를 여러 잡이 공유하는 경우</li>
@@ -290,7 +297,7 @@
 <h3>4.3 Dynamic Allocation K8S 설정 참고</h3>
 <p>K8S 환경에서 Dynamic Allocation을 사용하려면 아래 설정이 필요하다.</p>
 
-<pre><code># Dynamic Allocation 활성화
+<pre># Dynamic Allocation 활성화
 spark.dynamicAllocation.enabled=true
 
 # K8S에서는 External Shuffle Service 대신 Shuffle Tracking 사용
@@ -304,19 +311,19 @@ spark.dynamicAllocation.maxExecutors=20
 spark.dynamicAllocation.executorIdleTimeout=60s
 
 # 셔플 데이터가 있는 executor의 제거 타임아웃
-spark.dynamicAllocation.shuffleTracking.timeout=600s</code></pre>
+spark.dynamicAllocation.shuffleTracking.timeout=600s</pre>
 
-<div class="warning-panel">
-  <strong>주의 (Spark on K8S 공식 문서):</strong> K8S에서 Dynamic Allocation 사용 시 External Shuffle Service가 지원되지 않으므로 <code>spark.dynamicAllocation.shuffleTracking.enabled=true</code>가 필수이다. 셔플 데이터가 있는 executor는 셔플 트래킹 타임아웃이 만료될 때까지 제거되지 않으므로, 최악의 경우 이전 스테이지의 executor가 계속 유지되어 클러스터 리소스를 더 많이 점유할 수 있다.
-</div>
+<table border="0" cellpadding="10" cellspacing="0" style="width:100%; margin:12px 0;">
+  <tr><td style="background-color:#fffae6; border-radius:3px;">⚠️ <b>주의 (Spark on K8S 공식 문서):</b> K8S에서 Dynamic Allocation 사용 시 External Shuffle Service가 지원되지 않으므로 <code>spark.dynamicAllocation.shuffleTracking.enabled=true</code>가 필수이다. 셔플 데이터가 있는 executor는 셔플 트래킹 타임아웃이 만료될 때까지 제거되지 않으므로, 최악의 경우 이전 스테이지의 executor가 계속 유지되어 클러스터 리소스를 더 많이 점유할 수 있다.</td></tr>
+</table>
 
 <h3>4.4 권장 사항</h3>
 
-<div class="info-panel">
-  <strong>현재 상황에서는 고정 Executor 방식을 유지하되, 산정 기준을 개선하는 것을 권장한다.</strong>
-</div>
+<table border="0" cellpadding="10" cellspacing="0" style="width:100%; margin:12px 0;">
+  <tr><td style="background-color:#deebff; border-radius:3px;">ℹ️ <b>현재 상황에서는 고정 Executor 방식을 유지하되, 산정 기준을 개선하는 것을 권장한다.</b></td></tr>
+</table>
 
-<p><strong>이유:</strong></p>
+<p><b>이유:</b></p>
 <ol>
   <li>현재 워크플로우가 단순 read → append로, 스테이지별 리소스 요구량 차이가 크지 않아 Dynamic Allocation의 이점이 제한적이다.</li>
   <li>K8S 환경에서 Dynamic Allocation은 셔플 트래킹에 의존하는데, executor가 반환된 후 셔플 데이터를 재계산해야 하는 상황이 발생할 수 있다.</li>
@@ -324,21 +331,21 @@ spark.dynamicAllocation.shuffleTracking.timeout=600s</code></pre>
   <li>Pod 기동 오버헤드가 없어 처리 시간 예측이 용이하다.</li>
 </ol>
 
-<p><strong>다만, 아래 상황이라면 Dynamic Allocation 전환을 검토:</strong></p>
+<p><b>다만, 아래 상황이라면 Dynamic Allocation 전환을 검토:</b></p>
 <ul>
   <li>클러스터를 여러 팀/잡이 공유하여 리소스 경합이 빈번한 경우</li>
   <li>배치 데이터 크기 편차가 매우 커서(예: 10MB ~ 10GB) 고정 방식의 낭비가 심한 경우</li>
   <li>비용 최적화가 최우선 과제인 경우</li>
 </ul>
 
-<hr>
+<br>
 
 <h2>5. 튜닝 프로세스 가이드</h2>
 
 <h3>5.1 단계별 접근</h3>
 
 <h4>Step 1: 기본 설정으로 시작</h4>
-<pre><code>--driver-cores 1
+<pre>--driver-cores 1
 --driver-memory 2g
 --executor-cores 2
 --executor-memory 2g
@@ -346,12 +353,16 @@ spark.dynamicAllocation.shuffleTracking.timeout=600s</code></pre>
 --conf spark.sql.shuffle.partitions=200
 --conf spark.sql.adaptive.enabled=true
 --conf spark.sql.adaptive.coalescePartitions.enabled=true
---conf spark.sql.adaptive.coalescePartitions.parallelismFirst=true</code></pre>
+--conf spark.sql.adaptive.coalescePartitions.parallelismFirst=true</pre>
 
 <h4>Step 2: Spark UI로 모니터링</h4>
 <p>아래 항목들을 Spark UI에서 확인한다:</p>
-<table>
-  <tr><th>확인 항목</th><th>위치</th><th>정상 기준</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">확인 항목</th>
+    <th style="background-color:#f4f5f7; text-align:left;">위치</th>
+    <th style="background-color:#f4f5f7; text-align:left;">정상 기준</th>
+  </tr>
   <tr><td>태스크 분포</td><td>Stages 탭 → Task Metrics</td><td>태스크간 처리 시간 편차가 적을수록 좋음</td></tr>
   <tr><td>GC 시간</td><td>Executors 탭 → GC Time</td><td>전체 실행 시간의 10% 미만</td></tr>
   <tr><td>셔플 데이터</td><td>Stages 탭 → Shuffle Read/Write</td><td>비정상적으로 큰 셔플 확인</td></tr>
@@ -360,8 +371,12 @@ spark.dynamicAllocation.shuffleTracking.timeout=600s</code></pre>
 </table>
 
 <h4>Step 3: 병목 지점별 튜닝</h4>
-<table>
-  <tr><th>증상</th><th>원인 추정</th><th>조치</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">증상</th>
+    <th style="background-color:#f4f5f7; text-align:left;">원인 추정</th>
+    <th style="background-color:#f4f5f7; text-align:left;">조치</th>
+  </tr>
   <tr><td>GC 시간이 전체의 10% 초과</td><td>executor-memory 부족</td><td>executor-memory 증가 (2g → 4g)</td></tr>
   <tr><td>태스크 처리 시간 편차가 큼</td><td>데이터 스큐</td><td>repartition 또는 AQE skew join 확인</td></tr>
   <tr><td>셔플 write가 비정상적으로 큼</td><td>write.distribution-mode=hash</td><td>none으로 변경 고려 (+ 추후 compaction)</td></tr>
@@ -371,17 +386,26 @@ spark.dynamicAllocation.shuffleTracking.timeout=600s</code></pre>
 
 <h4>Step 4: 벤치마크 및 기록</h4>
 <p>각 설정 변경 시 아래 항목을 기록하여 비교한다:</p>
-<table>
-  <tr><th>테스트 ID</th><th>날짜</th><th>데이터 크기</th><th>num-executors</th><th>executor-cores</th><th>executor-memory</th><th>처리 시간</th><th>비고</th></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">테스트 ID</th>
+    <th style="background-color:#f4f5f7; text-align:left;">날짜</th>
+    <th style="background-color:#f4f5f7; text-align:left;">데이터 크기</th>
+    <th style="background-color:#f4f5f7; text-align:left;">num-executors</th>
+    <th style="background-color:#f4f5f7; text-align:left;">executor-cores</th>
+    <th style="background-color:#f4f5f7; text-align:left;">executor-memory</th>
+    <th style="background-color:#f4f5f7; text-align:left;">처리 시간</th>
+    <th style="background-color:#f4f5f7; text-align:left;">비고</th>
+  </tr>
   <tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
 </table>
 
-<hr>
+<br>
 
 <h2>6. 종합 권장 설정</h2>
 
 <h3>6.1 기본 설정 (소규모 배치: ~ 1GB)</h3>
-<pre><code>--driver-cores 1
+<pre>--driver-cores 1
 --driver-memory 2g
 --executor-cores 2
 --executor-memory 2g
@@ -389,10 +413,10 @@ spark.dynamicAllocation.shuffleTracking.timeout=600s</code></pre>
 --conf spark.sql.shuffle.partitions=200
 --conf spark.sql.adaptive.enabled=true
 --conf spark.sql.adaptive.coalescePartitions.enabled=true
---conf spark.sql.adaptive.coalescePartitions.parallelismFirst=true</code></pre>
+--conf spark.sql.adaptive.coalescePartitions.parallelismFirst=true</pre>
 
 <h3>6.2 중규모 배치 (1GB ~ 5GB)</h3>
-<pre><code>--driver-cores 1
+<pre>--driver-cores 1
 --driver-memory 2g
 --executor-cores 4
 --executor-memory 4g
@@ -400,32 +424,36 @@ spark.dynamicAllocation.shuffleTracking.timeout=600s</code></pre>
 --conf spark.sql.shuffle.partitions=200
 --conf spark.sql.adaptive.enabled=true
 --conf spark.sql.adaptive.coalescePartitions.enabled=true
---conf spark.sql.adaptive.coalescePartitions.parallelismFirst=true</code></pre>
+--conf spark.sql.adaptive.coalescePartitions.parallelismFirst=true</pre>
 
 <h3>6.3 추가 권장 설정 (공통)</h3>
-<pre><code># S3(MinIO) 대상 디렉토리 리스팅 병렬화
+<pre># S3(MinIO) 대상 디렉토리 리스팅 병렬화
 spark.sql.sources.parallelPartitionDiscovery.parallelism=20
 
 # Iceberg write 최적화 (필요시)
 
 # write.distribution-mode=none  → 셔플 제거, 쓰기 속도 우선 시
 
-# write.distribution-mode=hash  → 파일 수 최소화, 읽기 성능 우선 시 (기본값)</code></pre>
+# write.distribution-mode=hash  → 파일 수 최소화, 읽기 성능 우선 시 (기본값)</pre>
 
-<hr>
+<br>
 
 <h2>7. TODO / 개선 과제</h2>
-<table>
-  <tr><th>과제</th><th>우선순위</th><th>설명</th></tr>
-  <tr><td>num-executors 산정 기준 검증</td><td><span class="status-high">높음</span></td><td>70MB 기준을 maxPartitionBytes(128MB) 기반 공식과 비교 벤치마크</td></tr>
-  <tr><td>executor-memory 최적값 측정</td><td><span class="status-high">높음</span></td><td>Spark UI에서 peak memory를 확인하여 현재 메모리 대비 실제 사용량 분석</td></tr>
-  <tr><td>shuffle.partitions 검증</td><td><span class="status-mid">중간</span></td><td>AQE 활성화 상태에서 70 vs 200 비교</td></tr>
-  <tr><td>write.distribution-mode 테스트</td><td><span class="status-mid">중간</span></td><td>none vs hash 모드의 쓰기 성능, 파일 수, 후속 읽기 성능 비교</td></tr>
-  <tr><td>Dynamic Allocation 파일럿</td><td><span class="status-low">낮음</span></td><td>클러스터 공유 이슈 발생 시 검토</td></tr>
-  <tr><td>모니터링 대시보드 구축</td><td><span class="status-mid">중간</span></td><td>잡별 실행 시간, 리소스 사용량 추적</td></tr>
+<table border="1" cellpadding="8" cellspacing="0" style="border-collapse:collapse; width:100%;">
+  <tr>
+    <th style="background-color:#f4f5f7; text-align:left;">과제</th>
+    <th style="background-color:#f4f5f7; text-align:left;">우선순위</th>
+    <th style="background-color:#f4f5f7; text-align:left;">설명</th>
+  </tr>
+  <tr><td>num-executors 산정 기준 검증</td><td><b style="color:#de350b;">높음</b></td><td>70MB 기준을 maxPartitionBytes(128MB) 기반 공식과 비교 벤치마크</td></tr>
+  <tr><td>executor-memory 최적값 측정</td><td><b style="color:#de350b;">높음</b></td><td>Spark UI에서 peak memory를 확인하여 현재 메모리 대비 실제 사용량 분석</td></tr>
+  <tr><td>shuffle.partitions 검증</td><td><b style="color:#ff991f;">중간</b></td><td>AQE 활성화 상태에서 70 vs 200 비교</td></tr>
+  <tr><td>write.distribution-mode 테스트</td><td><b style="color:#ff991f;">중간</b></td><td>none vs hash 모드의 쓰기 성능, 파일 수, 후속 읽기 성능 비교</td></tr>
+  <tr><td>Dynamic Allocation 파일럿</td><td><b style="color:#36b37e;">낮음</b></td><td>클러스터 공유 이슈 발생 시 검토</td></tr>
+  <tr><td>모니터링 대시보드 구축</td><td><b style="color:#ff991f;">중간</b></td><td>잡별 실행 시간, 리소스 사용량 추적</td></tr>
 </table>
 
-<hr>
+<br>
 
 <h2>참고 문서</h2>
 <ul>
