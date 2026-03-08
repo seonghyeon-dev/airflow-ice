@@ -1,0 +1,12 @@
+# Spark Operator Helm values (로컬 kind 환경)
+controller:
+  resources:
+    requests:
+      memory: "128Mi"
+    limits:
+      memory: "256Mi"
+
+# Spark Job이 실행될 namespace 감시
+spark:
+  jobNamespaces:
+    - spark

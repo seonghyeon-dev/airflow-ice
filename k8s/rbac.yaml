@@ -1,0 +1,45 @@
+# RBAC 설정
+# Airflow에서 SparkKubernetesOperator를 통해 spark namespace에
+# SparkApplication CR을 생성/조회/삭제할 수 있도록 권한 부여
+---
+# Airflow용 ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: airflow
+  namespace: airflow
+---
+# Spark namespace에서 SparkApplication CR 관리 권한
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-app-manager
+  namespace: spark
+rules:
+  # SparkApplication CR 생성/조회/삭제
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch"]
+  # Spark Job Pod 로그 조회
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  # ConfigMap (Spark 설정 전달용)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "list", "delete"]
+---
+# Airflow SA → spark namespace Role 바인딩
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-spark-binding
+  namespace: spark
+subjects:
+  - kind: ServiceAccount
+    name: airflow
+    namespace: airflow
+roleRef:
+  kind: Role
+  name: spark-app-manager
+  apiGroup: rbac.authorization.k8s.io

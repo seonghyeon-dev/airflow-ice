@@ -1,0 +1,23 @@
+# kind 클러스터 설정
+# - extraMounts: 로컬 dags/ 디렉토리를 노드에 마운트 (DAG 실시간 반영)
+# - extraPortMappings: 로컬에서 Web UI 접근용 (Airflow, MinIO, Spark History Server)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /Users/leesh/workspace/airflow-ice/dags
+        containerPath: /opt/airflow/dags
+    extraPortMappings:
+      # Airflow Web UI
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP
+      # MinIO Console
+      - containerPort: 30901
+        hostPort: 9001
+        protocol: TCP
+      # Spark History Server
+      - containerPort: 30180
+        hostPort: 18080
+        protocol: TCP

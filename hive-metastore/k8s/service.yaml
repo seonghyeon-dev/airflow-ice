@@ -1,0 +1,16 @@
+# Hive Metastore Service
+# - Thrift 프로토콜로 클러스터 내부 접근
+# - Spark, Airflow 등에서 thrift://hive-metastore.metastore.svc.cluster.local:9083 으로 접속
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hive-metastore
+  namespace: metastore
+spec:
+  selector:
+    app: hive-metastore
+  ports:
+    - name: thrift
+      port: 9083
+      targetPort: 9083

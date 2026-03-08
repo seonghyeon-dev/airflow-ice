@@ -1,0 +1,25 @@
+# Namespace 정의
+# - airflow: Airflow 웹서버, 스케줄러, PostgreSQL
+# - spark: Spark Operator, History Server, Spark Job Pod
+# - metastore: Hive Metastore (standalone)
+# - storage: MinIO (S3 호환 오브젝트 스토리지)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: airflow
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spark
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: metastore
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storage
